@@ -13,7 +13,8 @@ import {
   IMetadata,
 } from '../interfaces/websocket.interface';
 import { tokens } from '../configs/tokens.config';
-import { wsRelayUrl } from '../configs/websocket.config';
+import { wsRelayOptions, wsRelayUrl } from '../configs/websocket.config';
+import { isConfidentialMode } from '../configs/solver-mode.config';
 import { LoggerService } from './logger.service';
 import { QuoterService } from './quoter.service';
 import { CacheService } from './cache.service';
@@ -32,7 +33,7 @@ export class WebsocketConnectionService {
   public constructor(private readonly quoterService: QuoterService, private readonly cacheService: CacheService) {}
 
   public start() {
-    this.wsConnection = new WebSocket(wsRelayUrl);
+    this.wsConnection = wsRelayOptions ? new WebSocket(wsRelayUrl, wsRelayOptions) : new WebSocket(wsRelayUrl);
 
     const logger = this.logger.toScopeLogger(randomUUID());
 
@@ -155,10 +156,13 @@ export class WebsocketConnectionService {
 
       switch (subscription.eventKind) {
         case RelayEventKind.QUOTE:
-          this.processQuote(req.params.data as IQuoteRequestData, req.params.metadata as IMetadata);
+          await this.processQuote(req.params.data as IQuoteRequestData, req.params.metadata as IMetadata);
           break;
         case RelayEventKind.QUOTE_STATUS:
-          this.processQuoteStatus(req.params.data as IPublishedQuoteData);
+          if (!(await this.acknowledgeQuoteStatus(req.params, logger))) {
+            return;
+          }
+          await this.processQuoteStatus(req.params.data as IPublishedQuoteData);
           break;
         default:
           logger.debug(`Unknown subscription event kind: ${subscription.eventKind}`);
@@ -222,12 +226,44 @@ export class WebsocketConnectionService {
   }
 
   private async subscribe(eventKind: RelayEventKind, logger: LoggerService) {
-    const subscriptionId = await this.sendRequestToRelay(RelayMethod.SUBSCRIBE, [eventKind], logger);
+    const subscriptionId = await this.sendRequestToRelay(
+      RelayMethod.SUBSCRIBE,
+      this.getSubscribeParams(eventKind),
+      logger,
+    );
     logger.debug(`Got subscriptionId for '${eventKind}': ${subscriptionId}`);
     if (typeof subscriptionId !== 'string') {
       throw new Error(`Unexpected subscriptionId type`);
     }
     this.subscriptions.set(subscriptionId, { eventKind, subscriptionId });
+  }
+
+  private getSubscribeParams(eventKind: RelayEventKind) {
+    if (isConfidentialMode && eventKind === RelayEventKind.QUOTE_STATUS) {
+      return [eventKind, null, true];
+    }
+
+    return [eventKind];
+  }
+
+  private async acknowledgeQuoteStatus(params: Record<string, unknown>, logger: LoggerService) {
+    if (!isConfidentialMode) {
+      return true;
+    }
+
+    if (typeof params.subscription !== 'string' || typeof params.seq !== 'number') {
+      logger.debug(`Skipping quote status acknowledgement without subscription id and seq`);
+      return false;
+    }
+
+    try {
+      const result = await this.sendRequestToRelay(RelayMethod.ACKNOWLEDGE, [params.subscription, params.seq], logger);
+      logger.debug(`Acknowledged quote status event, result: ${JSON.stringify(result)}`);
+      return true;
+    } catch (error) {
+      logger.error('Error while acknowledging quote status event', error as Error);
+      return false;
+    }
   }
 
   private isTokenPairSupported(identifierIn: string, identifierOut: string) {

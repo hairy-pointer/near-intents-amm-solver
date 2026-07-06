@@ -3,9 +3,10 @@ import bs58 from 'bs58';
 import { IMessage, SignStandardEnum } from '../interfaces/intents.interface';
 import { IMetadata, IQuoteRequestData, IQuoteResponseData } from '../interfaces/websocket.interface';
 import { CacheService } from './cache.service';
-import { intentsContract } from '../configs/intents.config';
+import { activeIntentsContract } from '../configs/intents.config';
 import { marginPercent, quoteDeadlineExtraMs, quoteDeadlineMaxMs } from '../configs/quoter.config';
 import { tokens } from '../configs/tokens.config';
+import { isConfidentialMode } from '../configs/solver-mode.config';
 import { NearService } from './near.service';
 import { IntentsService } from './intents.service';
 import { LoggerService } from './logger.service';
@@ -46,7 +47,7 @@ export class QuoterService {
   }
 
   public updateCurrentState = makeNonReentrant(async () => {
-    const reserves = await this.intentsService.getBalancesOnContract(tokens);
+    const reserves = await this.intentsService.getBalances(tokens);
     if (!this.currentState || !reserves.every((reserve, i) => reserve === this.currentState!.reserves[tokens[i]])) {
       this.currentState = {
         reserves: reserves.reduce((m, reserve, i) => ((m[tokens[i]] = reserve), m), {} as Record<string, string>),
@@ -113,10 +114,11 @@ export class QuoterService {
     }
 
     const quoteDeadlineMs = params.min_deadline_ms + quoteDeadlineExtraMs;
+    const deadline = new Date(Date.now() + quoteDeadlineMs);
     const standard = SignStandardEnum.nep413;
     const message: IMessage = {
       signer_id: this.nearService.getIntentsAccountId(),
-      deadline: new Date(Date.now() + quoteDeadlineMs).toISOString(),
+      deadline: deadline.toISOString(),
       intents: [
         {
           intent: 'token_diff',
@@ -128,8 +130,8 @@ export class QuoterService {
       ],
     };
     const messageStr = JSON.stringify(message);
-    const nonce = currentState.nonce;
-    const recipient = intentsContract;
+    const recipient = activeIntentsContract;
+    const nonce = isConfidentialMode ? this.intentsService.generateVersionedNonce(deadline) : currentState.nonce;
     const quoteHash = serializeIntent(messageStr, recipient, nonce, standard);
     const signature = await this.nearService.signMessage(quoteHash);
 

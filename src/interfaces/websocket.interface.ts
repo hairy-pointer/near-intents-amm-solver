@@ -2,6 +2,7 @@ import { SignStandardEnum } from './intents.interface';
 
 export enum RelayMethod {
   SUBSCRIBE = 'subscribe',
+  ACKNOWLEDGE = 'acknowledge',
   QUOTE_RESPONSE = 'quote_response',
 }
 

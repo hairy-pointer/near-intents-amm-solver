@@ -1,12 +1,16 @@
 import * as Joi from 'joi';
 
+const nonEmptyString = Joi.string().trim().min(1);
+const optionalNonEmptyString = nonEmptyString.allow(null);
+
 export const envVariablesValidationSchema = Joi.object({
   APP_PORT: Joi.number().default(3000),
 
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug').default('info'),
 
+  SOLVER_MODE: Joi.string().valid('public', 'confidential').default('public'),
+
   RELAY_WS_URL: Joi.string().allow('', null),
-  RELAY_AUTH_KEY: Joi.string().allow('', null),
 
   TEE_ENABLED: Joi.boolean().default(false),
 
@@ -38,6 +42,36 @@ export const envVariablesValidationSchema = Joi.object({
   NEAR_NODE_URL: Joi.string().allow('', null),
   // multiple node URLs for cross-checking results, separated by comma, e.g. `https://free.rpc.fastnear.com,https://near.lava.build`
   NEAR_NODE_URLS: Joi.string().allow('', null),
+  NEAR_NODE_HEADERS: Joi.string().allow('', null),
+
+  PRIVATE_RELAY_WS_URL: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: nonEmptyString.required(),
+    otherwise: Joi.string().allow('', null),
+  }),
+  PRIVATE_INTENTS_CONTRACT: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: nonEmptyString.required(),
+    otherwise: Joi.string().allow('', null),
+  }),
+  PRIVATE_INTENTS_CONTRACT_SALT: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: Joi.string()
+      .trim()
+      .pattern(/^[0-9a-fA-F]{8}$/)
+      .required(),
+    otherwise: Joi.string().allow('', null),
+  }),
+  PRIVATE_TREASURY_ACCOUNT_ID: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: nonEmptyString.required(),
+    otherwise: Joi.string().allow('', null),
+  }),
+  SOLVER_INSTANCE_ID: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: nonEmptyString.required(),
+    otherwise: optionalNonEmptyString,
+  }),
 
   AMM_TOKEN1_ID: Joi.string().required(),
   AMM_TOKEN2_ID: Joi.string().required(),
@@ -46,4 +80,13 @@ export const envVariablesValidationSchema = Joi.object({
     then: Joi.number().positive().required(),
     otherwise: Joi.number().positive().default(0.3),
   }),
+
+  ONE_CLICK_BASE_URL: Joi.string().uri().allow('', null).default('https://1click.chaindefuser.com'),
+  PARTNER_JWT: Joi.alternatives().conditional('SOLVER_MODE', {
+    is: 'confidential',
+    then: nonEmptyString.required(),
+    otherwise: optionalNonEmptyString,
+  }),
+  ONE_CLICK_ASSET_ID: optionalNonEmptyString,
+  ONE_CLICK_AMOUNT: optionalNonEmptyString,
 }).unknown();
