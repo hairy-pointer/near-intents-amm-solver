@@ -1,9 +1,29 @@
 import { randomBytes, createHash } from 'crypto';
 import { intentsContract } from '../configs/intents.config';
 import { NearService } from './near.service';
+import { tokens } from 'src/configs/tokens.config';
 
 export class IntentsService {
   public constructor(private readonly nearService: NearService) {}
+
+  public async init(): Promise<void> {
+    if (!intentsContract) {
+      throw new Error('Invalid intents contract');
+    }
+
+    // Verify reserves on NEAR Intents contract
+    try {
+      const reserves = await this.getBalancesOnContract(tokens);
+      if (reserves.length !== tokens.length) {
+        throw new Error(
+          `Invalid number of reserves on NEAR Intents contract ${intentsContract}: Expected: ${tokens.length}, Received: ${reserves.length}`,
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to validate reserves on NEAR Intents contract ${intentsContract}. ${errorMessage}`);
+    }
+  }
 
   public generateRandomNonce() {
     const randomArray = randomBytes(32);

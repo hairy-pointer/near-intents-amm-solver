@@ -81,7 +81,7 @@ Ensure the solver's Near account has sufficient funds in `AMM_TOKEN1_ID` and `AM
 
 For each token, deposit the desired amount to the Near Intents contract to form a reserve:
 
-> replace `token1.near`, `reseve_amount_1`, and `solver1.near` with your actual values below:
+> replace `token1.near`, `reserve_amount_1`, and `solver1.near` with your actual values below:
 
 ```bash
 npx near-cli-rs tokens solver1.near send-near solver1.near '1 yoctoNEAR' network-config mainnet sign-with-keychain send

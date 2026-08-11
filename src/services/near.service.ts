@@ -105,8 +105,11 @@ export class NearService {
 
   /**
    * Secure view function by cross-checking results from multiple NEAR RPC nodes
-   * @param { contractId: string, methodName: string, args: object | undefined }
-   * @returns validated view function result
+   * @param {Object} params - Parameters object
+   * @param {string} params.contractId - The contract ID to call
+   * @param {string} params.methodName - The view method name to call
+   * @param {object} [params.args] - Optional arguments to pass to the view method
+   * @returns {Promise<any>} Validated view function result
    */
   public async secureViewFunction(
     { contractId, methodName, args }: { contractId: string, methodName: string, args?: object },
