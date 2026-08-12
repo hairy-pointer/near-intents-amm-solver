@@ -222,7 +222,9 @@ export class WebsocketConnectionService {
   }
 
   private async subscribe(eventKind: RelayEventKind, logger: LoggerService) {
-    const subscriptionId = await this.sendRequestToRelay(RelayMethod.SUBSCRIBE, [eventKind], logger);
+    const params =
+      eventKind === RelayEventKind.QUOTE ? [eventKind, { tokens_in: tokens, tokens_out: tokens }] : [eventKind];
+    const subscriptionId = await this.sendRequestToRelay(RelayMethod.SUBSCRIBE, params, logger);
     logger.debug(`Got subscriptionId for '${eventKind}': ${subscriptionId}`);
     if (typeof subscriptionId !== 'string') {
       throw new Error(`Unexpected subscriptionId type`);
