@@ -9,6 +9,8 @@ export enum RelayMethod {
 export enum RelayEventKind {
   QUOTE = 'quote',
   QUOTE_STATUS = 'quote_status',
+  QUOTE_STATUS_EXTENDED = 'quote_status_extended',
+  SHIELD_STATUS = 'shield_status',
 }
 
 export interface IJsonrpcRelayRequest {
@@ -73,4 +75,18 @@ export interface IPublishedQuoteData {
   quote_hash: string;
   intent_hash: string;
   tx_hash: string;
+}
+
+export type QuoteStatusExtendedEventType =
+  | 'quote_ready_to_settle'
+  | 'quote_settle_failed'
+  | 'quote_settle_successful';
+
+export interface IQuoteStatusExtendedData extends IPublishedQuoteData {
+  event_type: QuoteStatusExtendedEventType;
+}
+
+export interface IShieldStatusData {
+  quote_hash: string;
+  status: string;
 }

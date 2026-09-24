@@ -126,7 +126,8 @@ In confidential mode:
 - the solver connects to `PRIVATE_RELAY_WS_URL`;
 - the solver signs `token_diff` intents for `PRIVATE_INTENTS_CONTRACT`;
 - the solver signs private quote responses with versioned nonces;
-- the solver sends quote responses the same way it does in public mode and confirms received quote status updates.
+- the solver sends quote responses the same way it does in public mode;
+- the solver subscribes to `quote_status_extended` without guaranteed delivery, and to `shield_status` with acknowledgements.
 
 Required confidential env vars:
 
@@ -145,9 +146,12 @@ PARTNER_JWT=...
 
 `PRIVATE_INTENTS_CONTRACT` identifies the confidential Intents contract used in signed quote payloads.
 
-### Quote status acknowledgements
+### Status subscriptions
 
-The relay supports an acknowledgement mechanism for guaranteed delivery of quote status updates. It is enabled by providing an `instance_id` in the websocket URL.
+Guaranteed delivery is only available on `quote_status` and `shield_status`. The private relay uses `quote_status_extended`, not `quote_status`.
+
+- `quote_status_extended` — subscribe with no third param. Events arrive. There is no queue and no redelivery. Do not ack. Only `quote_settle_successful` refreshes AMM state.
+- `shield_status` — subscribe with third param `true`. Ack `subscription` + `seq`. `instance_id` on the websocket URL is required for that queue. Unacked events redeliver on reconnect. `unshielded` refreshes AMM state.
 
 ### Depositing and withdrawing private liquidity with 1Click
 
