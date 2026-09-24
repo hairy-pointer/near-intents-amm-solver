@@ -7,6 +7,8 @@ import {
   IPublishedQuoteData,
   IQuoteRequestData,
   IQuoteResponseData,
+  IQuoteStatusExtendedData,
+  IShieldStatusData,
   ISubscription,
   RelayMethod,
   RelayEventKind,
@@ -90,7 +92,12 @@ export class WebsocketConnectionService {
     this.reconnectAttempts = 0;
     this.clearReconnectInterval();
     this.subscribe(RelayEventKind.QUOTE, logger);
-    this.subscribe(RelayEventKind.QUOTE_STATUS, logger);
+    if (isConfidentialMode) {
+      this.subscribe(RelayEventKind.QUOTE_STATUS_EXTENDED, logger);
+      this.subscribe(RelayEventKind.SHIELD_STATUS, logger);
+    } else {
+      this.subscribe(RelayEventKind.QUOTE_STATUS, logger);
+    }
   }
 
   private handleClose(logger: LoggerService) {
@@ -159,10 +166,18 @@ export class WebsocketConnectionService {
           await this.processQuote(req.params.data as IQuoteRequestData, req.params.metadata as IMetadata);
           break;
         case RelayEventKind.QUOTE_STATUS:
-          if (!(await this.acknowledgeQuoteStatus(req.params, logger))) {
-            return;
-          }
           await this.processQuoteStatus(req.params.data as IPublishedQuoteData);
+          break;
+        case RelayEventKind.QUOTE_STATUS_EXTENDED: {
+          const data = req.params.data as IQuoteStatusExtendedData;
+          if (data.event_type !== 'quote_settle_successful') {
+            break;
+          }
+          await this.processQuoteStatus(data);
+          break;
+        }
+        case RelayEventKind.SHIELD_STATUS:
+          await this.processShieldStatus(req.params, logger);
           break;
         default:
           logger.debug(`Unknown subscription event kind: ${subscription.eventKind}`);
@@ -239,30 +254,39 @@ export class WebsocketConnectionService {
   }
 
   private getSubscribeParams(eventKind: RelayEventKind) {
-    if (isConfidentialMode && eventKind === RelayEventKind.QUOTE_STATUS) {
+    if (isConfidentialMode && eventKind === RelayEventKind.SHIELD_STATUS) {
       return [eventKind, null, true];
     }
 
     return [eventKind];
   }
 
-  private async acknowledgeQuoteStatus(params: Record<string, unknown>, logger: LoggerService) {
-    if (!isConfidentialMode) {
-      return true;
+  private async processShieldStatus(params: Record<string, unknown>, logger: LoggerService) {
+    const data = params.data as IShieldStatusData | undefined;
+
+    try {
+      if (data?.status === 'unshielded') {
+        await this.quoterService.updateCurrentState();
+      }
+    } catch (error) {
+      logger.error('Error while processing shield status', error as Error);
+      return;
     }
 
+    await this.acknowledgeShieldStatus(params, logger);
+  }
+
+  private async acknowledgeShieldStatus(params: Record<string, unknown>, logger: LoggerService) {
     if (typeof params.subscription !== 'string' || typeof params.seq !== 'number') {
-      logger.debug(`Skipping quote status acknowledgement without subscription id and seq`);
-      return false;
+      logger.debug('Skipping shield status acknowledgement without subscription id and seq');
+      return;
     }
 
     try {
       const result = await this.sendRequestToRelay(RelayMethod.ACKNOWLEDGE, [params.subscription, params.seq], logger);
-      logger.debug(`Acknowledged quote status event, result: ${JSON.stringify(result)}`);
-      return true;
+      logger.debug(`Acknowledged shield status event, result: ${JSON.stringify(result)}`);
     } catch (error) {
-      logger.error('Error while acknowledging quote status event', error as Error);
-      return false;
+      logger.error('Error while acknowledging shield status event', error as Error);
     }
   }
 
