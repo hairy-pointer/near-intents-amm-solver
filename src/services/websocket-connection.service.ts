@@ -27,6 +27,7 @@ export class WebsocketConnectionService {
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = Infinity;
   private pendingRequests: Map<number, (response: IJsonrpcResponse) => void> = new Map();
+  private statusInFlight: Set<string> = new Set();
 
   private logger = new LoggerService('websocket');
 
@@ -85,12 +86,19 @@ export class WebsocketConnectionService {
     });
   }
 
-  private handleOpen(logger: LoggerService) {
+  private async handleOpen(logger: LoggerService) {
     logger.info(`WebSocket client connected to ${wsRelayUrl}`);
     this.reconnectAttempts = 0;
     this.clearReconnectInterval();
-    this.subscribe(RelayEventKind.QUOTE, logger);
-    this.subscribe(RelayEventKind.QUOTE_STATUS, logger);
+    try {
+      // Subscribe to quote statuses first, so that no quote can be signed and sent
+      // before the solver is able to observe how it settles.
+      await this.subscribe(RelayEventKind.QUOTE_STATUS, logger);
+      await this.subscribe(RelayEventKind.QUOTE, logger);
+    } catch (error) {
+      logger.error('Failed to subscribe to the relay', error as Error);
+      this.wsConnection.terminate();
+    }
   }
 
   private handleClose(logger: LoggerService) {
@@ -159,10 +167,7 @@ export class WebsocketConnectionService {
           await this.processQuote(req.params.data as IQuoteRequestData, req.params.metadata as IMetadata);
           break;
         case RelayEventKind.QUOTE_STATUS:
-          if (!(await this.acknowledgeQuoteStatus(req.params, logger))) {
-            return;
-          }
-          await this.processQuoteStatus(req.params.data as IPublishedQuoteData);
+          await this.handleQuoteStatus(req.params, logger);
           break;
         default:
           logger.debug(`Unknown subscription event kind: ${subscription.eventKind}`);
@@ -250,23 +255,48 @@ export class WebsocketConnectionService {
     return [eventKind];
   }
 
+  /**
+   * Processes a quote status event and, on a guaranteed-delivery subscription,
+   * acknowledges it afterwards. Acknowledging first would drop the event if the
+   * solver crashed while handling it; the relay redelivers unacknowledged events,
+   * and reprocessing one is harmless because it only refreshes the quoter state.
+   */
+  private async handleQuoteStatus(params: Record<string, unknown>, logger: LoggerService) {
+    const delivery = `${params.subscription}:${params.seq}`;
+    if (this.statusInFlight.has(delivery)) {
+      logger.debug(`Skipping quote status event already in flight: ${delivery}`);
+      return;
+    }
+
+    this.statusInFlight.add(delivery);
+    const connection = this.wsConnection;
+    try {
+      await this.processQuoteStatus(params.data as IPublishedQuoteData);
+      // A reconnect replays unacknowledged events on a new subscription, so an
+      // acknowledgement for the old one would be rejected.
+      if (connection === this.wsConnection) {
+        await this.acknowledgeQuoteStatus(params, logger);
+      }
+    } finally {
+      this.statusInFlight.delete(delivery);
+    }
+  }
+
   private async acknowledgeQuoteStatus(params: Record<string, unknown>, logger: LoggerService) {
     if (!isConfidentialMode) {
-      return true;
+      return;
     }
 
     if (typeof params.subscription !== 'string' || typeof params.seq !== 'number') {
       logger.debug(`Skipping quote status acknowledgement without subscription id and seq`);
-      return false;
+      return;
     }
 
     try {
       const result = await this.sendRequestToRelay(RelayMethod.ACKNOWLEDGE, [params.subscription, params.seq], logger);
       logger.debug(`Acknowledged quote status event, result: ${JSON.stringify(result)}`);
-      return true;
     } catch (error) {
       logger.error('Error while acknowledging quote status event', error as Error);
-      return false;
     }
   }
 

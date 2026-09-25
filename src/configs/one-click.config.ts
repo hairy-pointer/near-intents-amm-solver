@@ -5,11 +5,11 @@ export interface OneClickApiConfig {
   token?: string;
 }
 
-export interface OneClickApiAuthOptions {
-  userToken?: string;
-}
-
 const defaultOneClickBaseUrl = 'https://1click.chaindefuser.com';
+
+// Only this endpoint is authenticated as the solver's Intents account; everything
+// else is partner-authenticated with the API key.
+const userAuthenticatedPaths = ['/v0/account/balances'];
 
 export function getOneClickApiConfig(): OneClickApiConfig {
   return {
@@ -26,13 +26,18 @@ export function getRequiredOneClickApiConfig(): OneClickApiConfig & { token: str
   return { ...config, token: config.token };
 }
 
-export function configureOneClickApi(config: OneClickApiConfig, auth: OneClickApiAuthOptions = {}): void {
+/**
+ * Points the 1Click SDK at the configured environment and sets up authentication:
+ * the partner key always goes into `X-API-Key`, and the user access token is
+ * resolved lazily, only for the endpoints that need it.
+ */
+export function configureOneClickApi(
+  config: OneClickApiConfig & { token: string },
+  resolveUserToken?: () => Promise<string>,
+): void {
   OpenAPI.BASE = config.baseUrl;
-  OpenAPI.TOKEN = auth.userToken ?? config.token;
-  OpenAPI.HEADERS =
-    auth.userToken && config.token
-      ? {
-          'x-api-key': config.token,
-        }
-      : undefined;
+  OpenAPI.HEADERS = { 'X-API-Key': config.token };
+  // Resolving must never recurse: authenticating itself is partner-authenticated.
+  OpenAPI.TOKEN = async ({ url }) =>
+    resolveUserToken && userAuthenticatedPaths.includes(url) ? resolveUserToken() : '';
 }

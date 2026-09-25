@@ -147,7 +147,11 @@ PARTNER_JWT=...
 
 ### Quote status acknowledgements
 
-The relay supports an acknowledgement mechanism for guaranteed delivery of quote status updates. It is enabled by providing an `instance_id` in the websocket URL.
+The relay supports an acknowledgement mechanism for guaranteed delivery of quote status updates. It is enabled by providing an `instance_id` in the websocket URL, which the solver takes from `SOLVER_INSTANCE_ID`. Every running solver instance needs its own value.
+
+The solver acknowledges an event only after processing it, so an event is redelivered instead of being lost if the solver stops while handling it. Redelivery also means the same event can arrive more than once; here that is harmless, because processing it only refreshes the quoter state.
+
+This sample keeps signed quotes in memory, so after a restart it can no longer match a redelivered status update with the quote that produced it. A solver that acts on settlements should persist the quote context before sending the quote response.
 
 ### Depositing and withdrawing private liquidity with 1Click
 

@@ -2,6 +2,9 @@ import * as Joi from 'joi';
 
 const nonEmptyString = Joi.string().trim().min(1);
 const optionalNonEmptyString = nonEmptyString.allow(null);
+const instanceId = Joi.string()
+  .trim()
+  .pattern(/^[A-Za-z0-9_-]+$/);
 
 export const envVariablesValidationSchema = Joi.object({
   APP_PORT: Joi.number().default(3000),
@@ -67,10 +70,11 @@ export const envVariablesValidationSchema = Joi.object({
     then: nonEmptyString.required(),
     otherwise: Joi.string().allow('', null),
   }),
+  // Sent to the private relay as a query parameter, so keep it URL-safe.
   SOLVER_INSTANCE_ID: Joi.alternatives().conditional('SOLVER_MODE', {
     is: 'confidential',
-    then: nonEmptyString.required(),
-    otherwise: optionalNonEmptyString,
+    then: instanceId.required(),
+    otherwise: instanceId.allow(null),
   }),
 
   AMM_TOKEN1_ID: Joi.string().required(),

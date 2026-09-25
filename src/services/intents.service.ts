@@ -1,6 +1,17 @@
 import { randomBytes, createHash } from 'crypto';
-import { createIntentSignerNEP413, IntentsSDK, VersionedNonceBuilder } from '@defuse-protocol/intents-sdk';
-import { AccountService, UserAuthService, type MultiPayload } from '@defuse-protocol/one-click-sdk-typescript';
+import {
+  computeIntentHash,
+  createIntentSignerNEP413,
+  IntentsSDK,
+  VersionedNonceBuilder,
+  type MultiPayload,
+} from '@defuse-protocol/intents-sdk';
+import {
+  AccountService,
+  BalanceEntry,
+  MultiPayloadNep413,
+  UserAuthService,
+} from '@defuse-protocol/one-click-sdk-typescript';
 import { activeIntentsContract, intentsContract } from '../configs/intents.config';
 import { privateIntentsContractSalt } from '../configs/private-intents.config';
 import { isConfidentialMode } from '../configs/solver-mode.config';
@@ -18,12 +29,20 @@ type OneClickUserToken = {
   expiresAtMs: number;
 };
 
+export type SignedIntent = Extract<MultiPayload, { standard: 'nep413' }>;
+
 const authTokenRefreshSkewMs = 60_000;
 const oneClickAuthIntentTtlMs = 5 * 60_000;
 const oneClickAuthReferral = 'near-intents-amm-solver';
+// buildWithSalt() only derives a nonce from the salt when none was set explicitly,
+// so the public mode passes this placeholder together with its own nonce.
+const unusedSalt = new Uint8Array(4);
 
 export class IntentsService {
   private oneClickUserToken?: OneClickUserToken;
+  private oneClickApiConfigured = false;
+  private sdk?: IntentsSDK;
+  private signer?: ReturnType<typeof createIntentSignerNEP413>;
 
   public constructor(private readonly nearService: NearService) {}
 
@@ -57,9 +76,31 @@ export class IntentsService {
     return hash.digest('base64');
   }
 
-  public generateVersionedNonce(deadline: Date) {
-    const salt = this.parsePrivateIntentsContractSalt();
-    return VersionedNonceBuilder.encodeNonce(salt, deadline);
+  /**
+   * Signs a `token_diff` intent for the contract the solver currently trades on.
+   * Confidential Intents requires a versioned nonce derived from the contract
+   * salt; in public mode the caller keeps providing its own nonce, so that all
+   * quotes signed against the same reserves stay mutually exclusive on-chain.
+   */
+  public async signTokenDiff(
+    diff: Record<string, string>,
+    deadline: Date,
+    publicNonce: string,
+  ): Promise<{ signedData: SignedIntent; quoteHash: string }> {
+    const builder = this.getSdk()
+      .intentBuilder()
+      .setSigner(this.nearService.getIntentsAccountId())
+      .setVerifyingContract(activeIntentsContract)
+      .setDeadline(deadline)
+      .addIntent({ intent: 'token_diff', diff });
+
+    const payload = isConfidentialMode
+      ? builder.buildWithSalt(this.parsePrivateIntentsContractSalt())
+      : builder.setNonce(publicNonce).buildWithSalt(unusedSalt);
+
+    const signedData = await this.getSigner().signIntent(payload);
+
+    return { signedData, quoteHash: await computeIntentHash(signedData) };
   }
 
   public async getBalances(tokenIds: string[]) {
@@ -88,16 +129,29 @@ export class IntentsService {
   }
 
   private async getBalancesFromOneClick(tokenIds: string[]) {
-    const config = getRequiredOneClickApiConfig();
-    const userToken = await this.getOneClickUserToken(config);
-    configureOneClickApi(config, { userToken });
+    this.configureOneClick();
 
-    const response = await AccountService.getBalances(tokenIds);
-    const balancesByTokenId = new Map(response.balances.map(({ tokenId, available }) => [tokenId, available]));
+    // 1Click reports private balances under the public token id, so ask for all of
+    // them and select the requested assets locally.
+    const { balances } = await AccountService.getBalances();
 
     return tokenIds.map((tokenId) => {
-      return balancesByTokenId.get(tokenId) ?? balancesByTokenId.get(publicAssetIdentifier(tokenId)) ?? '0';
+      const publicTokenId = publicAssetIdentifier(tokenId);
+      const balance = balances.find(
+        ({ tokenId: id, source }) => id === publicTokenId && source === BalanceEntry.source.PRIVATE,
+      );
+      return balance?.available ?? '0';
     });
+  }
+
+  private configureOneClick() {
+    const config = getRequiredOneClickApiConfig();
+    if (!this.oneClickApiConfigured) {
+      configureOneClickApi(config, () => this.getOneClickUserToken(config));
+      this.oneClickApiConfigured = true;
+    }
+
+    return config;
   }
 
   private async getOneClickUserToken(config: OneClickApiConfig & { token: string }) {
@@ -105,8 +159,28 @@ export class IntentsService {
       return this.oneClickUserToken.accessToken;
     }
 
-    configureOneClickApi(config);
-    const signer = createIntentSignerNEP413({
+    const now = Date.now();
+    const payload = await this.getSdk(config)
+      .intentBuilder()
+      .setDeadline(new Date(now + oneClickAuthIntentTtlMs))
+      .setNonceRandomBytes(VersionedNonceBuilder.createTimestampedNonceBytes(new Date(now)))
+      .build();
+    const signed = await this.getSigner().signIntent(payload);
+    // The 1Click SDK declares its own payload union; only the standard differs.
+    const auth = await UserAuthService.authenticate({
+      signedData: { ...signed, standard: MultiPayloadNep413.standard.NEP413 },
+    });
+
+    this.oneClickUserToken = {
+      accessToken: auth.accessToken,
+      expiresAtMs: Date.now() + auth.expiresIn * 1000 - authTokenRefreshSkewMs,
+    };
+
+    return this.oneClickUserToken.accessToken;
+  }
+
+  private getSigner() {
+    this.signer ??= createIntentSignerNEP413({
       accountId: this.nearService.getIntentsAccountId(),
       signMessage: async (_nep413Payload, nep413Hash) => {
         const signature = await this.nearService.signMessage(nep413Hash);
@@ -117,24 +191,16 @@ export class IntentsService {
       },
     });
 
-    const now = Date.now();
-    const sdk = new IntentsSDK({
+    return this.signer;
+  }
+
+  private getSdk(config: OneClickApiConfig = getRequiredOneClickApiConfig()) {
+    this.sdk ??= new IntentsSDK({
       referral: oneClickAuthReferral,
       env: this.getOneClickAuthEnv(config),
     });
-    const { signed } = await sdk
-      .intentBuilder()
-      .setDeadline(new Date(now + oneClickAuthIntentTtlMs))
-      .setNonceRandomBytes(VersionedNonceBuilder.createTimestampedNonceBytes(new Date(now)))
-      .buildAndSign(signer);
-    const auth = await UserAuthService.authenticate({ signedData: signed as unknown as MultiPayload });
 
-    this.oneClickUserToken = {
-      accessToken: auth.accessToken,
-      expiresAtMs: Date.now() + auth.expiresIn * 1000 - authTokenRefreshSkewMs,
-    };
-
-    return this.oneClickUserToken.accessToken;
+    return this.sdk;
   }
 
   private getOneClickAuthEnv(config: OneClickApiConfig) {

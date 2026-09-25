@@ -1,16 +1,10 @@
 import Big from 'big.js';
-import bs58 from 'bs58';
-import { IMessage, SignStandardEnum } from '../interfaces/intents.interface';
 import { IMetadata, IQuoteRequestData, IQuoteResponseData } from '../interfaces/websocket.interface';
 import { CacheService } from './cache.service';
-import { activeIntentsContract } from '../configs/intents.config';
 import { marginPercent, quoteDeadlineExtraMs, quoteDeadlineMaxMs } from '../configs/quoter.config';
 import { tokens } from '../configs/tokens.config';
-import { isConfidentialMode } from '../configs/solver-mode.config';
-import { NearService } from './near.service';
 import { IntentsService } from './intents.service';
 import { LoggerService } from './logger.service';
-import { serializeIntent } from '../utils/hashing';
 import { makeNonReentrant } from '../utils/make-nonreentrant';
 
 type State = {
@@ -28,7 +22,6 @@ export class QuoterService {
 
   public constructor(
     private readonly cacheService: CacheService,
-    private readonly nearService: NearService,
     private readonly intentsService: IntentsService,
   ) {}
 
@@ -115,25 +108,14 @@ export class QuoterService {
 
     const quoteDeadlineMs = params.min_deadline_ms + quoteDeadlineExtraMs;
     const deadline = new Date(Date.now() + quoteDeadlineMs);
-    const standard = SignStandardEnum.nep413;
-    const message: IMessage = {
-      signer_id: this.nearService.getIntentsAccountId(),
-      deadline: deadline.toISOString(),
-      intents: [
-        {
-          intent: 'token_diff',
-          diff: {
-            [params.defuse_asset_identifier_in]: params.exact_amount_in ? params.exact_amount_in : amount,
-            [params.defuse_asset_identifier_out]: `-${params.exact_amount_out ? params.exact_amount_out : amount}`,
-          },
-        },
-      ],
-    };
-    const messageStr = JSON.stringify(message);
-    const recipient = activeIntentsContract;
-    const nonce = isConfidentialMode ? this.intentsService.generateVersionedNonce(deadline) : currentState.nonce;
-    const quoteHash = serializeIntent(messageStr, recipient, nonce, standard);
-    const signature = await this.nearService.signMessage(quoteHash);
+    const { signedData, quoteHash } = await this.intentsService.signTokenDiff(
+      {
+        [params.defuse_asset_identifier_in]: params.exact_amount_in ? params.exact_amount_in : amount,
+        [params.defuse_asset_identifier_out]: `-${params.exact_amount_out ? params.exact_amount_out : amount}`,
+      },
+      deadline,
+      currentState.nonce,
+    );
 
     const quoteResp: IQuoteResponseData = {
       quote_id: params.quote_id,
@@ -141,19 +123,10 @@ export class QuoterService {
         amount_in: params.exact_amount_out ? amount : undefined,
         amount_out: params.exact_amount_in ? amount : undefined,
       },
-      signed_data: {
-        standard,
-        payload: {
-          message: messageStr,
-          nonce,
-          recipient,
-        },
-        signature: `ed25519:${bs58.encode(signature.signature)}`,
-        public_key: `ed25519:${bs58.encode(signature.publicKey.data)}`,
-      },
+      signed_data: signedData,
     };
 
-    this.cacheService.set(bs58.encode(quoteHash), quoteResp, quoteDeadlineMs / 1000);
+    this.cacheService.set(quoteHash, quoteResp, quoteDeadlineMs / 1000);
 
     return quoteResp;
   }

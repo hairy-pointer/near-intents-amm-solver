@@ -2,13 +2,13 @@ import { KeyPair } from 'near-api-js';
 import { createIntentSignerNearKeyPair } from '@defuse-protocol/intents-sdk';
 import {
   GenerateSwapTransferIntentRequest,
+  type GenerateIntentResponse,
   GetExecutionStatusResponse,
   IntentStandardEnum,
+  MultiPayloadNep413,
   OneClickService,
   QuoteRequest,
   SubmitSwapTransferIntentRequest,
-  type MultiPayload,
-  type MultiPayloadNarrowed,
   type QuoteResponse,
 } from '@defuse-protocol/one-click-sdk-typescript';
 import {
@@ -23,16 +23,6 @@ import { loadEnv } from '../utils/load-env';
  * confidential Intents through 1Click.
  */
 type Direction = 'deposit' | 'withdraw';
-
-type GenerateIntentResponse = {
-  intent: MultiPayloadNarrowed;
-  correlationId: string;
-};
-
-type SubmitIntentResponse = {
-  intentHash: string;
-  correlationId: string;
-};
 
 const terminalStatuses = new Set<string>([
   GetExecutionStatusResponse.status.SUCCESS,
@@ -91,9 +81,9 @@ function assertDepositAddress(quoteResponse: QuoteResponse): string {
 }
 
 async function signNep413(
-  intent: MultiPayloadNarrowed,
+  intent: GenerateIntentResponse['intent'],
   config: OneClickConfidentialLiquidityConfig,
-): Promise<MultiPayload> {
+): Promise<MultiPayloadNep413> {
   if (intent.standard !== IntentStandardEnum.NEP413) {
     throw new Error(`Expected NEP-413 intent, got ${intent.standard}`);
   }
@@ -102,53 +92,9 @@ async function signNep413(
     accountId: config.accountId,
     signer: KeyPair.fromString(config.privateKey),
   });
+  const signed = await intentSigner.signRaw({ payload: intent.payload });
 
-  return (await intentSigner.signRaw({ payload: intent.payload })) as unknown as MultiPayload;
-}
-
-async function oneClickPost<TResponse>(
-  path: string,
-  body: unknown,
-  config: OneClickConfidentialLiquidityConfig,
-): Promise<TResponse> {
-  const baseUrl = config.baseUrl.replace(/\/$/, '');
-  const headers = {
-    'content-type': 'application/json',
-    authorization: `Bearer ${config.token}`,
-  };
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(`1Click ${path} failed with HTTP ${response.status}: ${responseText}`);
-  }
-
-  return JSON.parse(responseText) as TResponse;
-}
-
-async function generateIntent(
-  request: GenerateSwapTransferIntentRequest,
-  config: OneClickConfidentialLiquidityConfig,
-): Promise<GenerateIntentResponse> {
-  return oneClickPost<GenerateIntentResponse>('/v0/generate-intent', request, config);
-}
-
-async function submitIntent(
-  signedData: MultiPayload,
-  config: OneClickConfidentialLiquidityConfig,
-): Promise<SubmitIntentResponse> {
-  return oneClickPost<SubmitIntentResponse>(
-    '/v0/submit-intent',
-    {
-      type: SubmitSwapTransferIntentRequest.type.SWAP_TRANSFER,
-      signedData,
-    } satisfies SubmitSwapTransferIntentRequest,
-    config,
-  );
+  return { ...signed, standard: MultiPayloadNep413.standard.NEP413 };
 }
 
 async function waitForExecutionStatus(
@@ -190,19 +136,19 @@ async function run(): Promise<void> {
   console.log(`amountIn: ${quoteResponse.quote.amountIn}`);
   console.log(`amountOut: ${quoteResponse.quote.amountOut}`);
 
-  const generated = await generateIntent(
-    {
-      type: GenerateSwapTransferIntentRequest.type.SWAP_TRANSFER,
-      standard: IntentStandardEnum.NEP413,
-      signerId: config.accountId,
-      depositAddress,
-    },
-    config,
-  );
+  const generated = await OneClickService.generateIntent({
+    type: GenerateSwapTransferIntentRequest.type.SWAP_TRANSFER,
+    standard: IntentStandardEnum.NEP413,
+    signerId: config.accountId,
+    depositAddress,
+  });
   console.log(`generateIntent correlationId: ${generated.correlationId}`);
 
   const signedData = await signNep413(generated.intent, config);
-  const submitted = await submitIntent(signedData, config);
+  const submitted = await OneClickService.submitIntent({
+    type: SubmitSwapTransferIntentRequest.type.SWAP_TRANSFER,
+    signedData,
+  });
   if (!submitted.intentHash) {
     throw new Error('1Click submitIntent response does not include an intentHash');
   }
