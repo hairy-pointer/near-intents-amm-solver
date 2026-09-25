@@ -7,15 +7,21 @@ export interface OneClickApiConfig {
 
 const defaultOneClickBaseUrl = 'https://1click.chaindefuser.com';
 
-// Only this endpoint is authenticated as the solver's Intents account; everything
-// else is partner-authenticated with the API key.
-const userAuthenticatedPaths = ['/v0/account/balances'];
-
 export function getOneClickApiConfig(): OneClickApiConfig {
   return {
     baseUrl: process.env.ONE_CLICK_BASE_URL || defaultOneClickBaseUrl,
     token: process.env.PARTNER_JWT || undefined,
   };
+}
+
+// 1Click authentication signs a public intent for the matching environment.
+export function getOneClickIntentsEnv(): 'production' | 'stage' {
+  const { baseUrl } = getOneClickApiConfig();
+  try {
+    return new URL(baseUrl).hostname === '1click.chaindefuser.com' ? 'production' : 'stage';
+  } catch {
+    return 'stage';
+  }
 }
 
 export function getRequiredOneClickApiConfig(): OneClickApiConfig & { token: string } {
@@ -39,5 +45,5 @@ export function configureOneClickApi(
   OpenAPI.HEADERS = { 'X-API-Key': config.token };
   // Resolving must never recurse: authenticating itself is partner-authenticated.
   OpenAPI.TOKEN = async ({ url }) =>
-    resolveUserToken && userAuthenticatedPaths.includes(url) ? resolveUserToken() : '';
+    resolveUserToken && url === '/v0/account/balances' ? resolveUserToken() : '';
 }

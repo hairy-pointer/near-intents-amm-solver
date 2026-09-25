@@ -28,18 +28,6 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-function requireNonTeeMode(): void {
-  if (process.env.TEE_ENABLED === 'true') {
-    throw new Error('1Click confidential liquidity example requires TEE_ENABLED=false with NEAR_ACCOUNT_ID and NEAR_PRIVATE_KEY');
-  }
-}
-
-function requireConfidentialMode(): void {
-  if (process.env.SOLVER_MODE !== 'confidential') {
-    throw new Error('1Click confidential liquidity example requires SOLVER_MODE=confidential');
-  }
-}
-
 function requiredEd25519PrivateKey(name: string): `ed25519:${string}` {
   const value = requiredEnv(name);
   if (!value.startsWith('ed25519:')) {
@@ -49,8 +37,12 @@ function requiredEd25519PrivateKey(name: string): `ed25519:${string}` {
 }
 
 export function getOneClickConfidentialLiquidityConfig(): OneClickConfidentialLiquidityConfig {
-  requireNonTeeMode();
-  requireConfidentialMode();
+  if (process.env.TEE_ENABLED === 'true') {
+    throw new Error('1Click confidential liquidity example requires TEE_ENABLED=false with NEAR_ACCOUNT_ID and NEAR_PRIVATE_KEY');
+  }
+  if (process.env.SOLVER_MODE !== 'confidential') {
+    throw new Error('1Click confidential liquidity example requires SOLVER_MODE=confidential');
+  }
   const oneClickApiConfig = getRequiredOneClickApiConfig();
 
   return {

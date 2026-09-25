@@ -9,7 +9,6 @@ import {
   OneClickService,
   QuoteRequest,
   SubmitSwapTransferIntentRequest,
-  type QuoteResponse,
 } from '@defuse-protocol/one-click-sdk-typescript';
 import {
   getOneClickConfidentialLiquidityConfig,
@@ -72,14 +71,6 @@ function buildQuoteRequest(direction: Direction, config: OneClickConfidentialLiq
   };
 }
 
-function assertDepositAddress(quoteResponse: QuoteResponse): string {
-  const depositAddress = quoteResponse.quote.depositAddress;
-  if (!depositAddress) {
-    throw new Error('1Click quote response does not include a depositAddress');
-  }
-  return depositAddress;
-}
-
 async function signNep413(
   intent: GenerateIntentResponse['intent'],
   config: OneClickConfidentialLiquidityConfig,
@@ -127,7 +118,10 @@ async function run(): Promise<void> {
   console.log(`requesting ${direction} quote for ${quoteRequest.amount} ${quoteRequest.originAsset}`);
 
   const quoteResponse = await OneClickService.getQuote(quoteRequest);
-  const depositAddress = assertDepositAddress(quoteResponse);
+  const depositAddress = quoteResponse.quote.depositAddress;
+  if (!depositAddress) {
+    throw new Error('1Click quote response does not include a depositAddress');
+  }
   console.log(`quote correlationId: ${quoteResponse.correlationId}`);
   console.log(`depositAddress: ${depositAddress}`);
   if (quoteResponse.quote.depositMemo) {

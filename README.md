@@ -145,6 +145,8 @@ PARTNER_JWT=...
 
 `PRIVATE_INTENTS_CONTRACT` identifies the confidential Intents contract used in signed quote payloads.
 
+`ONE_CLICK_BASE_URL` also selects the public Intents environment used for 1Click authentication: the `1click.chaindefuser.com` host uses production, and other hosts use stage. Public quote signing does not require `PARTNER_JWT`.
+
 ### Quote status acknowledgements
 
 The relay supports an acknowledgement mechanism for guaranteed delivery of quote status updates. It is enabled by providing an `instance_id` in the websocket URL, which the solver takes from `SOLVER_INSTANCE_ID`. Every running solver instance needs its own value.

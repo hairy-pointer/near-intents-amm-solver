@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'crypto';
+import { createHash } from 'crypto';
 import {
   computeIntentHash,
   createIntentSignerNEP413,
@@ -17,8 +17,8 @@ import { privateIntentsContractSalt } from '../configs/private-intents.config';
 import { isConfidentialMode } from '../configs/solver-mode.config';
 import {
   configureOneClickApi,
+  getOneClickIntentsEnv,
   getRequiredOneClickApiConfig,
-  type OneClickApiConfig,
 } from '../configs/one-click.config';
 import { NearService } from './near.service';
 import { publicAssetIdentifier } from '../utils/private-assets';
@@ -53,21 +53,11 @@ export class IntentsService {
 
     // Verify reserves on NEAR Intents contract
     try {
-      const reserves = await this.getBalances(tokens);
-      if (reserves.length !== tokens.length) {
-        throw new Error(
-          `Invalid number of reserves on NEAR Intents contract ${activeIntentsContract}: Expected: ${tokens.length}, Received: ${reserves.length}`,
-        );
-      }
+      await this.getBalances(tokens);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to validate reserves on NEAR Intents contract ${activeIntentsContract}. ${errorMessage}`);
     }
-  }
-
-  public generateRandomNonce() {
-    const randomArray = randomBytes(32);
-    return randomArray.toString('base64');
   }
 
   public generateDeterministicNonce(input: string) {
@@ -147,20 +137,18 @@ export class IntentsService {
   private configureOneClick() {
     const config = getRequiredOneClickApiConfig();
     if (!this.oneClickApiConfigured) {
-      configureOneClickApi(config, () => this.getOneClickUserToken(config));
+      configureOneClickApi(config, () => this.getOneClickUserToken());
       this.oneClickApiConfigured = true;
     }
-
-    return config;
   }
 
-  private async getOneClickUserToken(config: OneClickApiConfig & { token: string }) {
+  private async getOneClickUserToken() {
     if (this.oneClickUserToken && this.oneClickUserToken.expiresAtMs > Date.now()) {
       return this.oneClickUserToken.accessToken;
     }
 
     const now = Date.now();
-    const payload = await this.getSdk(config)
+    const payload = await this.getSdk()
       .intentBuilder()
       .setDeadline(new Date(now + oneClickAuthIntentTtlMs))
       .setNonceRandomBytes(VersionedNonceBuilder.createTimestampedNonceBytes(new Date(now)))
@@ -194,21 +182,13 @@ export class IntentsService {
     return this.signer;
   }
 
-  private getSdk(config: OneClickApiConfig = getRequiredOneClickApiConfig()) {
+  private getSdk() {
     this.sdk ??= new IntentsSDK({
       referral: oneClickAuthReferral,
-      env: this.getOneClickAuthEnv(config),
+      env: getOneClickIntentsEnv(),
     });
 
     return this.sdk;
-  }
-
-  private getOneClickAuthEnv(config: OneClickApiConfig) {
-    try {
-      return new URL(config.baseUrl).hostname === '1click.chaindefuser.com' ? 'production' : 'stage';
-    } catch {
-      return 'stage';
-    }
   }
 
   private parsePrivateIntentsContractSalt() {
@@ -219,17 +199,5 @@ export class IntentsService {
     }
 
     return salt;
-  }
-
-  private async isNonceUsed(nonce: string) {
-    const account = this.nearService.getAccount();
-    return await account.viewFunction({
-      contractId: intentsContract,
-      methodName: 'is_nonce_used',
-      args: {
-        account_id: this.nearService.getIntentsAccountId(),
-        nonce,
-      },
-    });
   }
 }
