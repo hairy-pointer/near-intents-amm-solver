@@ -119,26 +119,38 @@ export async function getQuote(client: DstackClient, reportData: string | Buffer
   checksum: string,
   quote_collateral: unknown
 }> {
-  // get TDX quote
-  const ra = await client.getQuote(reportData);
-  const quote_hex = ra.quote.replace(/^0x/, '');
+  try {
+    // get TDX quote
+    const ra = await client.getQuote(reportData);
+    const quote_hex = ra.quote?.replace(/^0x/, '') ?? '';
+    if (!quote_hex) {
+      throw new Error(`Invalid quote received from TEE: ${ra.quote}. Please make sure you are running inside TEE and can get a valid quote.`);
+    }
 
-  // get quote collateral
-  const formData = new FormData();
-  formData.append('hex', quote_hex);
+    // get quote collateral
+    const formData = new FormData();
+    formData.append('hex', quote_hex);
 
-  // WARNING: this endpoint could throw or be offline
-  const result = await (
-    await fetch('https://proof.t16z.com/api/upload', {
-      method: 'POST',
-      body: formData,
-    })
-  ).json();
+    // WARNING: this endpoint could throw or be offline
+    const result = await (
+      await fetch('https://proof.t16z.com/api/upload', {
+        method: 'POST',
+        body: formData,
+      })
+    ).json();
 
-  return {
-    quote_hex,
-    checksum: result.checksum,
-    quote_collateral: result.quote_collateral,
+    // Validate response structure
+    if (!result.checksum || !result.quote_collateral) {
+      throw new Error(`Invalid quote collateral received: ${JSON.stringify(result)}.`);
+    }
+
+    return {
+      quote_hex,
+      checksum: result.checksum,
+      quote_collateral: result.quote_collateral,
+    }
+  } catch (error) {
+    throw new Error(`Failed to get TEE quote or collateral: ${error}`);
   }
 }
 

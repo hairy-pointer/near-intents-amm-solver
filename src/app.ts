@@ -15,6 +15,7 @@ export async function app() {
   await nearService.init();
 
   const intentsService = new IntentsService(nearService);
+  await intentsService.init();
 
   if (teeEnabled) {
     const workerService = new WorkerService(nearService);

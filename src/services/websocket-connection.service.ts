@@ -239,6 +239,10 @@ export class WebsocketConnectionService {
   }
 
   private getSubscribeParams(eventKind: RelayEventKind) {
+    if (eventKind === RelayEventKind.QUOTE) {
+      return [eventKind, { tokens_in: tokens, tokens_out: tokens }];
+    }
+
     if (isConfidentialMode && eventKind === RelayEventKind.QUOTE_STATUS) {
       return [eventKind, null, true];
     }

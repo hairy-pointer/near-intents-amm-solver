@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from 'crypto';
 import { createIntentSignerNEP413, IntentsSDK, VersionedNonceBuilder } from '@defuse-protocol/intents-sdk';
 import { AccountService, UserAuthService, type MultiPayload } from '@defuse-protocol/one-click-sdk-typescript';
-import { intentsContract } from '../configs/intents.config';
+import { activeIntentsContract, intentsContract } from '../configs/intents.config';
 import { privateIntentsContractSalt } from '../configs/private-intents.config';
 import { isConfidentialMode } from '../configs/solver-mode.config';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../configs/one-click.config';
 import { NearService } from './near.service';
 import { publicAssetIdentifier } from '../utils/private-assets';
+import { tokens } from 'src/configs/tokens.config';
 
 type OneClickUserToken = {
   accessToken: string;
@@ -25,6 +26,25 @@ export class IntentsService {
   private oneClickUserToken?: OneClickUserToken;
 
   public constructor(private readonly nearService: NearService) {}
+
+  public async init(): Promise<void> {
+    if (!activeIntentsContract) {
+      throw new Error('Invalid intents contract');
+    }
+
+    // Verify reserves on NEAR Intents contract
+    try {
+      const reserves = await this.getBalances(tokens);
+      if (reserves.length !== tokens.length) {
+        throw new Error(
+          `Invalid number of reserves on NEAR Intents contract ${activeIntentsContract}: Expected: ${tokens.length}, Received: ${reserves.length}`,
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to validate reserves on NEAR Intents contract ${activeIntentsContract}. ${errorMessage}`);
+    }
+  }
 
   public generateRandomNonce() {
     const randomArray = randomBytes(32);
