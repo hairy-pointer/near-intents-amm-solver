@@ -45,7 +45,6 @@ export const envVariablesValidationSchema = Joi.object({
   NEAR_NODE_URL: Joi.string().allow('', null),
   // multiple node URLs for cross-checking results, separated by comma, e.g. `https://free.rpc.fastnear.com,https://near.lava.build`
   NEAR_NODE_URLS: Joi.string().allow('', null),
-  NEAR_NODE_HEADERS: Joi.string().allow('', null),
 
   PRIVATE_RELAY_WS_URL: Joi.alternatives().conditional('SOLVER_MODE', {
     is: 'confidential',
